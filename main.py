@@ -65,7 +65,7 @@ def check_trades():
             # 我们只关心买入操作 (BUY 或 TRADE)
             # REDEEM 是领奖，WITHDRAW 是提现，这些跳过
             action_type = item.get('type', '').upper()
-            if action_type not in ['BUY', 'TRADE', 'REDEEM']: 
+            if action_type not in ['BUY', 'TRADE']:
                 continue
 
             # 4. 时间处理
