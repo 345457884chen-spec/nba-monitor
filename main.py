@@ -1,108 +1,58 @@
 import cloudscraper
-import datetime
-import time
+import json
 import os
 
 # ================== 配置区域 ==================
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
 TARGET_ADDRESS = '0xf5d9a163cb1a6865cd2a1854cef609ab29b2a6e1'.lower()
 # ============================================
 
-def send_telegram_message(message):
-    if not BOT_TOKEN or not CHAT_ID:
-        print("❌ 错误：未配置 Token 或 Chat ID")
-        return
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown", "disable_web_page_preview": True}
-    scraper = cloudscraper.create_scraper()
-    try:
-        scraper.post(url, data=data)
-    except Exception as e:
-        print(f"TG推送失败: {e}")
-
-def check_trades():
-    print("正在启动 CLOB 引擎监控...")
+def diagnose():
+    print("👨‍⚕️ 正在启动【手术级】诊断...")
     
-    # 🔥 修正点：使用官方 CLOB 接口
-    # 域名是 clob.polymarket.com，路径是 /data/trades
-    url = f"https://clob.polymarket.com/data/trades?taker_address={TARGET_ADDRESS}&limit=20"
+    # 回到那个唯一能连上的 Data API
+    url = f"https://data-api.polymarket.com/activity?user={TARGET_ADDRESS}&limit=10"
     
     scraper = cloudscraper.create_scraper()
     try:
         response = scraper.get(url, timeout=15)
-        
-        # 打印状态码，方便调试
         if response.status_code != 200:
-            print(f"接口报错 (CLOB): {response.status_code}")
-            # 如果 CLOB 也不行，可能是 Cloudflare 拦截，我们打印出来
-            print(f"错误信息: {response.text[:100]}")
+            print(f"❌ 连不上: {response.status_code}")
             return
-            
-        trades = response.json()
-        # CLOB 接口有时候返回的是个列表，有时候在大字典里，这里做个兼容
-        if isinstance(trades, dict) and 'data' in trades:
-            trades = trades['data']
-            
+        activities = response.json()
     except Exception as e:
-        print(f"连接报错: {e}")
+        print(f"❌ 报错: {e}")
         return
 
-    # 获取当前时间
-    now = time.time()
-    found_count = 0
-    check_window = 60 * 60 # 60分钟
+    print(f"✅ 获取到 {len(activities)} 条记录。")
+    print("正在寻找那个 N/A 的订单...\n")
 
-    print(f"✅ CLOB 连接成功！获取到 {len(trades)} 条成交记录，开始分析...")
-
-    for item in trades:
-        try:
-            # 1. 筛选买入 (BUY)
-            # CLOB 接口里，买入通常 side = 'BUY'
-            if item.get('side') != 'BUY':
-                continue
+    found_na = False
+    
+    for i, item in enumerate(activities):
+        # 简单的打印一下概要
+        slug = item.get('market_slug')
+        
+        # 如果我们找到了一个 slug 是 None (N/A) 的订单，或者就是你刚才那个时间点的
+        # 我们就把它的【全部内容】打印出来
+        if slug is None or slug == "null" or slug == "":
+            print(f"🚨 找到第 {i+1} 条是 N/A 订单！")
+            print("=" * 30)
+            print("👇 这个订单的完整原始数据 (请把下面这段截图或复制给我) 👇")
+            print("=" * 30)
             
-            # 2. 时间处理 (CLOB 返回的是 13 位毫秒时间戳)
-            ts = int(item.get('timestamp', 0))
-            if ts > 9999999999:
-                ts = ts / 1000
+            # 这行代码会把所有隐藏的信息都打印出来
+            print(json.dumps(item, indent=4, ensure_ascii=False))
             
-            if now - ts > check_window:
-                continue
-
-            # 3. 获取信息
-            price = float(item.get('price', 0) or 0)
-            size = float(item.get('size', 0) or 0)
-            amount = price * size
-            
-            # CLOB 接口返回的是 asset_id (资产ID)，不是人话 slug
-            # 但是！我们可以把 asset_id 显示出来，你点链接去看
-            asset_id = item.get('asset_id', 'Unknown')
-            
-            time_str = datetime.datetime.fromtimestamp(ts).strftime('%H:%M')
-            
-            # 4. 发送通知
-            # 因为 CLOB 也是机器码，我们这里无法过滤 "NBA" 字样
-            # 策略：只要有买入，就先推给你，你点链接确认
-            # (为了不让你被骚扰，我们只推金额大于 10U 的)
-            if amount > 10:
-                msg = (
-                    f"🚨 **监控到新买入! (CLOB)**\n\n"
-                    f"💰 **金额**: ${amount:,.0f} USD\n"
-                    f"🎯 **价格**: ${price:.2f}\n"
-                    f"⌚ **时间**: {time_str}\n"
-                    f"🔗 [👉 点击查看详情](https://polymarket.com/profile/{TARGET_ADDRESS})"
-                )
-                send_telegram_message(msg)
-                found_count += 1
-                print(f"✅ 已推送: ${amount}")
-
-        except Exception as e:
-            print(f"处理单条数据出错: {e}")
-            continue
-
-    if found_count == 0:
-        print("过去 60 分钟内无有效买入。")
+            print("=" * 30)
+            found_na = True
+            # 为了不刷屏，只打第一个找到的 N/A
+            break 
+    
+    if not found_na:
+        print("🤔 奇怪，这次获取的前10条里没有发现 N/A 订单。")
+        print("👇 为了保险，我打印第一条的完整数据给你看看：")
+        if len(activities) > 0:
+            print(json.dumps(activities[0], indent=4, ensure_ascii=False))
 
 if __name__ == "__main__":
-    check_trades()
+    diagnose()
