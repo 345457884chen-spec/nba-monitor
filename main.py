@@ -46,7 +46,7 @@ def check_trades():
     
     # 我们设定的检查频率是每15分钟运行一次
     # 所以我们只筛选“过去 16 分钟内”的订单（多1分钟防止漏单）
-    check_window = 16 * 60 
+    check_window = 30 * 60 
 
     for item in activities:
         # 1. 只看买入
