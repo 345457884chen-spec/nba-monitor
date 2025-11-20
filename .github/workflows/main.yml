@@ -1,0 +1,32 @@
+name: NBA Monitor Bot
+
+on:
+  schedule:
+    # 每 15 分钟运行一次 (格式是 Cron 表达式)
+    - cron: '*/15 * * * *'
+  # 允许你可以手动点击按钮运行（方便测试）
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 下载代码 (Checkout)
+        uses: actions/checkout@v3
+
+      - name: 安装 Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: 安装依赖包
+        run: |
+          pip install -r requirements.txt
+
+      - name: 运行监控脚本
+        env:
+          # 这里把保险箱里的密码传给代码
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python main.py
