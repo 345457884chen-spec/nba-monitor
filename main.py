@@ -80,7 +80,7 @@ def check_trades():
 
     now = time.time()
     found_count = 0
-    check_window = 60 * 60  # 检查过去1小时
+    check_window = 60 * 60 * 24  # 检查过去1小时
 
     print(f"获取到 {len(activities)} 条记录，正在分析...")
 
