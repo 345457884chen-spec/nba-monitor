@@ -5,7 +5,6 @@ import os
 import json
 
 # ================== 配置区域 ==================
-# 本地跑请直接填 Token，GitHub跑请保持 os.environ
 BOT_TOKEN = os.environ.get("BOT_TOKEN") 
 CHAT_ID = os.environ.get("CHAT_ID")
 TARGET_ADDRESS = '0xf5d9a163cb1a6865cd2a1854cef609ab29b2a6e1'.lower()
@@ -23,46 +22,48 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"TG推送失败: {e}")
 
-# 🔥 新增：强制翻译函数
-def resolve_team_name(slug, token_id):
+# 🔥 核心升级：获取盘口完整信息
+def resolve_market_details(slug, token_id):
     """
-    输入：比赛代码(slug) 和 那串乱码数字(token_id)
-    输出：真正的球队名字 (例如 Hawks)
+    输入：比赛代码(slug) 和 Token ID
+    输出：(具体选项, 盘口名称) 
+    例如：('Lakers -2.5', 'Spread') 或 ('Over', 'Total Points: 228.5')
     """
-    print(f"🕵️‍♂️ 正在去数据库反查 ID: {token_id} ...")
+    print(f"🕵️‍♂️ 正在深度解析 ID: {token_id} ...")
     
-    # 这是一个很少人知道的高级接口，专门查市场详情
     url = f"https://gamma-api.polymarket.com/events?slug={slug}"
     scraper = cloudscraper.create_scraper()
     
     try:
         resp = scraper.get(url, timeout=10)
         if resp.status_code != 200:
-            return "查询超时"
+            return None, None
         
         data = resp.json()
-        # 在返回的数据里，寻找哪个市场的 tokenID 和我们要找的一样
+        
+        # 遍历该比赛下的所有盘口（胜负、让分、大小分等都在这里面）
         for market in data.get('markets', []):
-            clob_ids = market.get('clobTokenIds', []) # 这里的 ID 是字符串
-            outcomes = market.get('outcomes', [])     # 这里是名字 ['Hawks', 'Spurs']
+            clob_ids = market.get('clobTokenIds', [])
+            outcomes = market.get('outcomes', [])
+            question = market.get('question', '未知盘口') # 获取盘口标题
             
-            # 把我们要找的数字转成字符串对比
             target_id = str(token_id)
             
             if target_id in clob_ids:
-                # 找到了！获取对应的位置
                 index = clob_ids.index(target_id)
-                real_name = outcomes[index]
-                print(f"✅ 破案了！ID {token_id} = {real_name}")
-                return real_name
+                outcome_name = outcomes[index]
+                
+                # 💡 特殊处理：如果是大小分，盘口标题通常包含分数 (Total: 228.5)
+                # 我们把 outcome 和 question 结合一下，看起来更直观
+                return outcome_name, question
                 
     except Exception as e:
-        print(f"翻译出错: {e}")
+        print(f"解析出错: {e}")
     
-    return "解析失败"
+    return None, None
 
 def check_trades():
-    print("正在启动 NBA 监控 (智能翻译版)...")
+    print("正在启动 NBA 全盘口监控...")
     
     url = f"https://data-api.polymarket.com/activity?user={TARGET_ADDRESS}&limit=20"
     
@@ -79,18 +80,20 @@ def check_trades():
 
     now = time.time()
     found_count = 0
-    check_window = 60 * 60 
+    check_window = 60 * 60  # 检查过去1小时
 
     print(f"获取到 {len(activities)} 条记录，正在分析...")
 
     for item in activities:
         try:
-            # 1. 基础信息
+            # 1. 基础过滤
             slug = item.get('slug') or item.get('market_slug') or ''
             title = item.get('title') or ''
             event_slug = item.get('eventSlug') or ''
+            
             full_text = (slug + " " + title + " " + event_slug).upper()
             
+            # 只看篮球/NBA
             if "NBA" not in full_text and "BASKETBALL" not in full_text:
                 continue
 
@@ -103,7 +106,7 @@ def check_trades():
             if now - ts > check_window:
                 continue
 
-            # 计算金额
+            # 2. 计算金额
             price = float(item.get('price', 0) or 0)
             size = float(item.get('size', 0) or 0)
             usdc_size = float(item.get('usdcSize', 0) or 0)
@@ -111,42 +114,48 @@ def check_trades():
             amount = value if value > 0 else (price * size if price * size > 0 else usdc_size)
 
             # =========================================
-            # 🔥 核心修改：智能识别与强制翻译
+            # 🔥 核心修改：无论显示什么，都强制进行深度解析
             # =========================================
-            raw_asset = str(item.get('asset', ''))
-            raw_outcome = str(item.get('outcome', ''))
+            raw_asset = str(item.get('asset', ''))      # Token ID
+            raw_outcome = str(item.get('outcome', ''))  # 有时候是 ID，有时候是名字
             
-            picked_team = "未知"
+            # 优先使用 Asset ID (Token ID) 去查，因为最准
+            token_id_to_check = raw_asset if (raw_asset and len(raw_asset) > 5) else raw_outcome
+            search_slug = event_slug if event_slug else slug
 
-            # 1. 先看是不是现成的名字
-            if raw_outcome and not (raw_outcome.isdigit() and len(raw_outcome) > 5):
-                picked_team = raw_outcome
-            elif raw_asset and not (raw_asset.isdigit() and len(raw_asset) > 5):
-                picked_team = raw_asset
-            
-            # 2. 如果发现是乱码数字，立刻启动【强制翻译】
+            real_outcome = "解析中..."
+            market_question = "未知盘口"
+
+            if token_id_to_check and len(str(token_id_to_check)) > 5:
+                res_outcome, res_question = resolve_market_details(search_slug, token_id_to_check)
+                if res_outcome:
+                    real_outcome = res_outcome
+                    market_question = res_question
             else:
-                # 找到那个乱码数字
-                token_id_to_check = raw_outcome if (raw_outcome.isdigit() and len(raw_outcome)>5) else raw_asset
-                
-                if token_id_to_check:
-                    # ⚡️ 调用上面的翻译函数
-                    # 我们用 event_slug 或 slug 去查数据库
-                    search_slug = event_slug if event_slug else slug
-                    translated_name = resolve_team_name(search_slug, token_id_to_check)
-                    
-                    if translated_name and translated_name != "解析失败":
-                        picked_team = translated_name
-                    else:
-                        picked_team = "⏳ 等待官方更新..."
+                # 如果没有ID，只能用原始名称
+                real_outcome = raw_outcome
 
-            display_title = title if title else slug
+            # 3. 构建更清晰的显示文案
+            # 判断盘口类型，加一些 Emoji 方便快速识别
+            market_tag = "🏀 胜负盘"
+            if "Spread" in market_question or "Handicap" in market_question:
+                market_tag = "⚖️ 让分盘 (Spread)"
+            elif "Total" in market_question or "Over" in market_question or "Under" in market_question:
+                market_tag = "🔢 大小分 (Total)"
+            elif "Quarter" in market_question:
+                market_tag = "1️⃣ 单节 (Quarter)"
+            elif "Half" in market_question:
+                market_tag = "🌗 半场 (Half)"
+
             time_str = datetime.datetime.fromtimestamp(ts).strftime('%H:%M')
             
             msg = (
-                f"🚨 **监控到 NBA 下单!**\n\n"
-                f"🏀 **比赛**: {display_title}\n"
-                f"🏆 **买入**: {picked_team}\n" 
+                f"🚨 **监控到 NBA 下单!**\n"
+                f"➖➖➖➖➖➖➖➖➖\n"
+                f"🏟️ **比赛**: {title}\n"
+                f"📌 **盘口**: {market_tag}\n"
+                f"📝 **详情**: {market_question}\n"
+                f"🎯 **买入**: `{real_outcome}`\n" 
                 f"💰 **金额**: ${amount:,.0f} USD\n"
                 f"⌚ **时间**: {time_str}\n"
                 f"🔗 [👉 查看地址详情](https://polymarket.com/profile/{TARGET_ADDRESS})"
@@ -154,7 +163,7 @@ def check_trades():
             
             send_telegram_message(msg)
             found_count += 1
-            print(f"✅ 已推送: {display_title} - {picked_team}")
+            print(f"✅ 已推送: {real_outcome} [{market_question}]")
 
         except Exception as e:
             print(f"处理单条数据出错: {e}")
