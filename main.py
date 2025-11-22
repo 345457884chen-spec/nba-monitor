@@ -78,8 +78,8 @@ def resolve_market_details(slug, event_slug, token_id):
 def check_trades():
     print("🚀 正在启动 NBA 全盘口监控 (智能回溯版)...")
     
-    # ⚠️ 测试配置：limit=100 (抓取最近100条)
-    url = f"https://data-api.polymarket.com/activity?user={TARGET_ADDRESS}&limit=100"
+    # ⚠️ 测试配置：limit=20 (抓取最近20条)
+    url = f"https://data-api.polymarket.com/activity?user={TARGET_ADDRESS}&limit=20"
     
     scraper = cloudscraper.create_scraper()
     try:
@@ -95,9 +95,9 @@ def check_trades():
     now = time.time()
     found_count = 0
     
-    # ⚠️ 测试配置：回溯过去 24 小时 (60*60*24)
+    # ⚠️ 测试配置：回溯过去 24 小时 (60*60)
     # 正式运行时建议改为 60*60 (1小时) 或 60*10 (10分钟)
-    check_window = 60 * 60 * 24 
+    check_window = 60 * 60 
 
     print(f"📊 获取到 {len(activities)} 条记录，正在分析...")
 
